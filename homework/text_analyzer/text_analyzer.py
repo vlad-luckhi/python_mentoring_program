@@ -4,6 +4,8 @@ from typing import Dict, List
 from collections import Counter
 from functools import cached_property
 
+import logging
+import requests
 import time
 import re
 
@@ -64,19 +66,17 @@ class AnalysisReport:
 
 
 class TextAnalyzer:
-    def __init__(self, filename: str) -> None:
-        self.text = self.read_file(filename)
-
-        self.sentences = []
-        self.words = []
-        self.characters = []
+    def __init__(self, text_name: str, text_type: str) -> None:
+        self.text_name = text_name
+        self.text_type = text_type
 
     def generate_analysis_report(self) -> AnalysisReport:
+
+        self.logger.info('Started analysis.')
         start_time = time.time()
 
-        self.sentences = self.get_sentences(self.text)
-        self.words = self.get_words(self.text)
-        self.characters = self.get_characters(self.text)
+        if not self.text:
+            return None
 
         analysis_report = AnalysisReport(
             number_of_characters=self.number_of_characters,
@@ -101,8 +101,48 @@ class TextAnalyzer:
         analysis_report.time_of_processing = round((time.time() - start_time) * 1000, 2)
         analysis_report.report_generation_datetime = datetime.now()
 
+        self.logger.info(f'Finished analysis. Processing time -> {analysis_report.time_of_processing}.')
         return analysis_report
 
+    @cached_property
+    def logger(self) -> logging.Logger:
+        logger = logging.getLogger(f'{self.text_type} {self.text_name} Logger')
+        logger.setLevel(logging.INFO)
+
+        file_handler = logging.FileHandler('textanalyzer.log')
+        file_handler.setFormatter(
+            logging.Formatter(
+                f'%(asctime)s|{self.text_type}|{self.text_name}|%(message)s'
+            )
+        )
+        logger.addHandler(file_handler)
+
+        return logger
+
+    @cached_property
+    def text(self) -> str:
+        try:
+            if self.text_type == 'FILE':
+                return self.read_file(self.text_name)
+            elif self.text_type == 'RESOURCE':
+                return self.read_resource(self.text_name)
+        except Exception as e:
+            self.logger.error(f'Unable to read the text: {e}')
+            return None
+
+    @cached_property
+    def sentences(self) -> List[str]:
+        sentence_pattern = re.compile(r'([A-Z][^\.!?]*[\.!?])', re.M)
+        return sentence_pattern.findall(self.text)
+
+    @cached_property
+    def words(self) -> List[str]:
+        return list(map(lambda word: word.lower(), re.findall(r'\b\S+\b', self.text)))
+
+    @cached_property
+    def characters(self) -> List[str]:
+        alphanumeric = filter(lambda c: c.isalnum(), self.text)
+        return list(map(lambda c: c.lower(), alphanumeric))
 
     @cached_property
     def number_of_characters(self) -> int:
@@ -203,16 +243,10 @@ class TextAnalyzer:
         return text
 
     @staticmethod
-    def get_sentences(text: str) -> List[str]:
-        sentence_pattern = re.compile(r'([A-Z][^\.!?]*[\.!?])', re.M)
-        return sentence_pattern.findall(text)
+    def read_resource(resource_name: str) -> str:
+        result = requests.get(resource_name)
 
-    @staticmethod
-    def get_words(text: str) -> List[str]:
-        return list(map(lambda word: word.lower(), re.findall(r'\b\S+\b', text)))
-
-    @staticmethod
-    def get_characters(text: str) -> List[str]:
-        alphanumeric = filter(lambda c: c.isalnum(), text)
-        return list(map(lambda c: c.lower(), alphanumeric))
-
+        if result.status_code == 200:
+            return result.text
+        else:
+            raise Exception(f'Response from server -> {result.status_code}.')
